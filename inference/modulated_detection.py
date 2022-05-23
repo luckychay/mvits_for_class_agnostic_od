@@ -141,3 +141,25 @@ class ModulatedDetection(Inference):
         all_boxes = class_agnostic_nms(all_boxes, all_scores)
 
         return all_boxes, all_scores
+    
+    def infer(self, imgs, **kwargs):
+        caption = kwargs["caption"]
+        boxes, scores = [], []
+        # propagate through the models
+        memory_cache = self.model(imgs.tensor, [caption], encode_and_save=True)
+        outputs = self.model(imgs.tensor, [caption], encode_and_save=False, memory_cache=memory_cache)
+        # keep only predictions with self.conf_thresh+ confidence
+        probas = 1 - outputs['pred_logits'].softmax(-1)[0, :, -1].cpu()
+        keep = (probas > self.conf_thresh).cpu()
+        # convert boxes from [0; 1] to image scales
+        print(imgs.image_sizes)
+        bboxes_scaled = self.rescale_bboxes(outputs['pred_boxes'].cpu()[0, keep], imgs.image_sizes[0])
+        kept_probs = probas[keep]
+        # Convert outputs to the required format
+        bboxes = list(bboxes_scaled.numpy())
+        probs = list(kept_probs.numpy())
+        for b, conf in zip(bboxes, probs):
+            boxes.append([int(b[0]), int(b[1]), int(b[2]), int(b[3])])
+            scores.append(conf)
+        # Read image, perform inference, parse results, append the predicted boxes to detections
+        return boxes, scores
